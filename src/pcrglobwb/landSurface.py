@@ -165,11 +165,23 @@ class LandSurface(object):
             "transportFreeWater",
         ]
 
+        self.includeRichards = False
+        if "includeRichards" in list(iniItems.landSurfaceOptions.keys()):
+            self.includeRichards = iniItems.landSurfaceOptions['includeRichards'] == "True"
+        if self.includeRichards:
+            assert self.numberOfSoilLayers == 2, "Richards requires 2 soil layers"
+            self.richVars = ['soilTempUpp', 'soilTempLow', 'sensibleHF', 'longWaveRad',
+                             'latentHF', 'groundHF', 'netRad', 'netSW',
+                             'tempDeficit_6AM', 'tempDeficit_6PM']
+            
         # specific variables for the 2- and 3-layer soil models
         if self.numberOfSoilLayers == 2:
-            self.mainStates += ["storUpp", "storLow"]
-            self.stateVars += self.mainStates
-            self.fluxVars += ["actTranspiUpp", "actTranspiLow", "netPercUpp"]
+            self.mainStates += ['storUpp', 'storLow']
+            self.stateVars  += self.mainStates
+            self.fluxVars   += ['actTranspiUpp', 'actTranspiLow', 'netPercUpp']
+            if self.includeRichards:
+                self.fluxVars += self.richVars
+                self.fluxVars+=self.richVars
 
         if self.numberOfSoilLayers == 3:
             self.mainStates += ["storUpp000005", "storUpp005030", "storLow030150"]
