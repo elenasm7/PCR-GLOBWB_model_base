@@ -167,6 +167,17 @@ class Meteo(object):
         self.refETPotVarName = "evapotranspiration"
         self.read_meteo_variable_names(iniItems.meteoOptions)
 
+        # Richards model: extra meteo inputs (cloud cover, radiation, vapour pressure, sunshine table)
+        self.includeRichards = False
+        if "includeRichards" in list(iniItems.landSurfaceOptions.keys()):
+            self.includeRichards = iniItems.landSurfaceOptions["includeRichards"] == "True"
+        if self.includeRichards:
+            logger.info("Initialising meteo data for the Richards model")
+            self.cloudFileNC = vos.getFullPath(iniItems.meteoOptions["cloudcoverNC"], self.inputDir)
+            self.radFileNC = vos.getFullPath(iniItems.meteoOptions["radiationNC"], self.inputDir)
+            self.vapFileNC = vos.getFullPath(iniItems.meteoOptions["vaporNC"], self.inputDir)
+            self.sunFracTBL = vos.getFullPath(iniItems.meteoOptions["sunhoursTable"], self.inputDir)
+
         # latitudes, required to calculate referenceETPot with the Hamon and Penman-Monteith methods
         self.latitudes = pcr.ycoordinate(pcr.boolean(1.0))
         self.latitudes_in_radian = vos.deg2rad(self.latitudes)
@@ -1218,6 +1229,61 @@ class Meteo(object):
 
             self.referencePotET = pcr.max(0.0, factor * self.referencePotET)
 
+    def readExtensiveMeteo(self, currTimeStep):
+
+        logger.info("Reading the data for the Richards model")
+
+        # cloud cover (fraction); the input is in percent
+        self.cloudCover = (
+            vos.netcdf2PCRobjClone(
+                self.cloudFileNC,
+                "cld",
+                str(currTimeStep.fulldate),
+                useDoy=None,
+                LatitudeLongitude=True,
+            )
+            / pcr.scalar(100)
+        )
+
+        # incoming shortwave radiation
+        self.radiation = vos.netcdf2PCRobjClone(
+            self.radFileNC,
+            "rsds",
+            str(currTimeStep.fulldate),
+            useDoy="daily",
+            LatitudeLongitude=True,
+        )
+        self.rsw = self.radiation
+
+        # vapour pressure; the input is in hPa, converted to kPa
+        self.vaporPressure = (
+            vos.netcdf2PCRobjClone(
+                self.vapFileNC,
+                "vap",
+                str(currTimeStep.fulldate),
+                useDoy=None,
+                LatitudeLongitude=True,
+            )
+            / pcr.scalar(10)
+        )
+
+        '''
+        removing these since the new radiation data will take care of this.
+
+        # fraction of sunshine hours from the cloud cover (table lookup, linearly interpolated)
+        cld1 = pcr.roundoff(10 * self.cloudCover + 0.5)
+        cld0 = cld1 - 1
+        sun0 = pcr.lookupscalar(self.sunFracTBL, cld0)
+        deltaSun = (pcr.lookupscalar(self.sunFracTBL, cld1) - sun0) / (cld1 - cld0)
+        sunFrac = sun0 + (10 * self.cloudCover - cld0) * deltaSun
+
+        # shortwave radiation reaching the surface
+        self.radCon = 0.25
+        self.radSlope = 0.5
+        radFrac = self.radCon + self.radSlope * sunFrac
+        self.rsw = radFrac * self.radiation
+        '''
+
     def read_forcings(self, currTimeStep):
 
         # RvB (13 Jul 2016): the hard-coded variable names of precipitation, temperature and
@@ -1289,6 +1355,8 @@ class Meteo(object):
         # ignore very small precipitation (below 0.00001 m/day or 0.01 kg.m-2.day-1)
         if self.usingDailyTimeStepForcingData and self.rounddownPrecipitation:
             self.precipitation = pcr.rounddown(self.precipitation * 100000.0) / 100000.0
+        if self.includeRichards:
+            self.readExtensiveMeteo(currTimeStep)
 
         # method to find the time indices in the temperature netCDF file (default: None, or from the ini file)
         method_for_time_index = None

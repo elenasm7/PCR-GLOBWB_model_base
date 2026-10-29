@@ -271,7 +271,7 @@ def runRichards(self, meteo, groundwater, currTimeStep):
     #Flatten the input
     infiltration_numpy=infiltration_numpy.flatten()
     actTranspiUpp_numpy=actTranspiUpp_numpy.flatten()
-    actTranspiLow_numpy=actTranspiUpp_numpy.flatten()
+    actTranspiLow_numpy=actTranspiLow_numpy.flatten()
     actBareSoilEvap_numpy=actBareSoilEvap_numpy.flatten()
     storUpp_numpy=storUpp_numpy.flatten()
     storLow_numpy=storLow_numpy.flatten()
@@ -488,28 +488,26 @@ def runRichards(self, meteo, groundwater, currTimeStep):
             #Make a list of the percolation (to check the waterbalance)
             qOutUpp=np.vstack((qOutUpp, q0[self.layerFactorRichards,:]))
             qOutLow=np.vstack((qOutLow, q0[0,:]))
-            
+                
             if self.numberOfCoresRichards>1:
             #Multicorerprocessing!
             #Send everything to self.
-                global psi0_mp, t_mp, p_mp, qTop_mp,qBot_mp, psiTop_mp, psiBot_mp,z_mp,T0_mp, n2 #Global variables to use for multiprocessing.
-                
-                psi0_mp=psi0   
-                t_mp=t
-                p_mp=p[:,nanindexUpp==False]
-                qTop_mp=qTop[nanindexUpp==False]
-                qBot_mp=qBot[nanindexUpp==False]
-                psiTop_mp=psiTop[nanindexUpp==False]
-                psiBot_mp=psiBot[nanindexUpp==False]
-                z_mp=z[:,nanindexUpp==False]
-                T0_mp=T0
-                n2=(n1[0],1) #Multiprocessing works per cell!
-                
-                #Actual computation
-                pool = mp.Pool(self.numberOfCoresRichards)
-                psi1 = pool.map(solve, range(n1[1]))
-                pool.close()
-                
+                #global psi0_mp, t_mp, p_mp, qTop_mp,qBot_mp, psiTop_mp, psiBot_mp,z_mp,T0_mp, n2 #Global variables to use for multiprocessing.
+                p_m = p[:, nanindexUpp==False]
+                z_m = z[:, nanindexUpp==False]
+                qTop_m = qTop[nanindexUpp==False]
+                qBot_m = qBot[nanindexUpp==False]
+                psiTop_m = psiTop[nanindexUpp==False]
+                psiBot_m = psiBot[nanindexUpp==False]
+
+                cell_args = [
+                    (psi0[:, i], t, p_m[:, [i]], qTop_m[i], qBot_m[i], psiTop_m[i], psiBot_m[i], z_m[:, [i]], T0[:, [i]], (n1[0], 1))
+                    for i in range(n1[1])
+                ]
+
+                with mp.Pool(self.numberOfCoresRichards) as pool:
+                    psi1 = pool.map(solve, cell_args)
+
                 psi1=np.asarray(psi1)
                 psi=psi1[:,1,:].T #Give the output the correct shape.
            
@@ -779,18 +777,12 @@ def runRichards(self, meteo, groundwater, currTimeStep):
     
     
 #ADDED FOR MULTIPROCESSING: START
-def solve(i):
+def solve(cell_args):
     '''
     Works only for 2 layers system
     '''
-    #n2=(2,1)
-    psi2=psi0_mp[:,i].flatten()
-    z_solve=np.expand_dims(z_mp[:,i],axis=1)
-    T0_solve=np.expand_dims(T0_mp[:,i],axis=1)
-    p_solve=np.expand_dims(p_mp[:,i],axis=1)
-    
-    sol = odeint(RichardsModel_dz2,psi2,t_mp,args=(n2, p_solve, qTop_mp[i],qBot_mp[i], psiTop_mp[i],psiBot_mp[i],z_solve, T0_solve), mxstep=3500);
-    return sol
+    psi2, t_cell, p_cell, qTop_cell, qBot_cell, psiTop_cell, psiBot_cell, z_cell, T0_cell, n_cell = cell_args
+    return odeint(RichardsModel_dz2, psi2.flatten(), t_cell, args=(n_cell, p_cell, qTop_cell, qBot_cell, psiTop_cell, psiBot_cell, z_cell, T0_cell), mxstep=3500)
 #ADDED FOR MULTIPROCESSING: STOP                
 
 

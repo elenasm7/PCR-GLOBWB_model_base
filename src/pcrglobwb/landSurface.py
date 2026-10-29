@@ -157,7 +157,6 @@ class LandSurface(object):
             "irrigationTranspirationDeficit",
         ]
 
-        # added by Joren
         self.fluxVars += [
             "incomingVolSnow",
             "transportVolSnow",
@@ -165,23 +164,31 @@ class LandSurface(object):
             "transportFreeWater",
         ]
 
+        # Richards equation (including soil temperature and surface energy balance)
         self.includeRichards = False
         if "includeRichards" in list(iniItems.landSurfaceOptions.keys()):
-            self.includeRichards = iniItems.landSurfaceOptions['includeRichards'] == "True"
+            self.includeRichards = iniItems.landSurfaceOptions["includeRichards"] == "True"
         if self.includeRichards:
             assert self.numberOfSoilLayers == 2, "Richards requires 2 soil layers"
-            self.richVars = ['soilTempUpp', 'soilTempLow', 'sensibleHF', 'longWaveRad',
-                             'latentHF', 'groundHF', 'netRad', 'netSW',
-                             'tempDeficit_6AM', 'tempDeficit_6PM']
-            
+            self.richVars = [
+                "soilTempUpp",
+                "soilTempLow",
+                "sensibleHF",
+                "longWaveRad",
+                "latentHF",
+                "groundHF",
+                "netRad",
+                "netSW",
+                "tempDeficit_6AM",
+                "tempDeficit_6PM",
+            ]
+            self.fluxVars += self.richVars
+
         # specific variables for the 2- and 3-layer soil models
         if self.numberOfSoilLayers == 2:
-            self.mainStates += ['storUpp', 'storLow']
-            self.stateVars  += self.mainStates
-            self.fluxVars   += ['actTranspiUpp', 'actTranspiLow', 'netPercUpp']
-            if self.includeRichards:
-                self.fluxVars += self.richVars
-                self.fluxVars+=self.richVars
+            self.mainStates += ["storUpp", "storLow"]
+            self.stateVars += self.mainStates
+            self.fluxVars += ["actTranspiUpp", "actTranspiLow", "netPercUpp"]
 
         if self.numberOfSoilLayers == 3:
             self.mainStates += ["storUpp000005", "storUpp005030", "storLow030150"]
@@ -1902,6 +1909,7 @@ class LandSurface(object):
                 groundwater,
                 self.satisfied_irrigation_water_height[coverType],
                 self.reducedCapRise,
+                meteo=meteo,
             )
 
         # set all aggregated variables to zero

@@ -13,8 +13,8 @@ DATA_DIR="${REPO_ROOT}/../data"
 START_DATE=2000-01-01
 END_DATE=2000-01-07
 
-INPUT_DIR="$DATA_DIR/CATALOGUE/TEST_CASES/tugela"
-CLONE_MAP="clone_maps/tugela_30arcminutes"
+INPUT_DIR="$DATA_DIR/CATALOGUE/TEST_CASES/rhine"
+CLONE_MAP="clone_maps/rhine_30arcminutes"
 
 # ---------------------------------------------------------------------------
 # get data
@@ -30,7 +30,7 @@ pixi run --manifest-path "$REPO_ROOT/pixi.toml" \
 # ---------------------------------------------------------------------------
 pixi run --manifest-path "$REPO_ROOT/pixi.toml" pcrglobwb-run-with-arguments \
     "$REPO_ROOT/configuration/run_with_args/pcrglobwb/pcrglobwb_30arcminutes.ini" \
-    -mod "$DATA_DIR/output/30arcminutes/pcrglobwb_richards" \
+    -mod "$DATA_DIR/output/30arcminutes/pcrglobwb_richards_extended" \
     -mid "$INPUT_DIR" \
     -clonemap "$CLONE_MAP" \
     -sd "$START_DATE" \

@@ -1,5 +1,8 @@
 import datetime
 import logging
+import numpy as np
+
+from pcrglobwb import richards as ri
 
 import pcraster as pcr
 
@@ -30,6 +33,18 @@ class LandCover(object):
         self.numberOfSoilLayers = int(
             iniItems.landSurfaceOptions["numberOfUpperSoilLayers"]
         )
+
+        # Richards equation options - Joren
+        self.includeRichards = False
+        if "includeRichards" in list(iniItems.landSurfaceOptions.keys()):
+            self.includeRichards = iniItems.landSurfaceOptions["includeRichards"] == "True"
+        if self.includeRichards:
+            self.layerFactorRichards = int(iniItems.landSurfaceOptions["layerFactorRichards"])
+            self.layerBoundariesRichards = iniItems.landSurfaceOptions["layerBoundariesRichards"]
+            self.layerBoundariesRichards = self.layerBoundariesRichards.replace("[", "").replace("]", "")
+            self.layerBoundariesRichards = np.array([float(v) for v in self.layerBoundariesRichards.split(",")])
+            self.numberOfCoresRichards = int(iniItems.landSurfaceOptions["numberOfCoresRichards"])
+            self.timestepRichards = int(iniItems.landSurfaceOptions["timestepRichards"])
 
         self.parameters = soil_and_topo_parameters
 
@@ -939,6 +954,9 @@ class LandCover(object):
                     vars(self)[var] = iniConditions[str(var)]
                 vars(self)[var] = pcr.ifthen(self.landmask, vars(self)[var])
 
+        if self.includeRichards:
+            ri.initialiseRichards(self)
+
     def set_land_cover_parameters(self, currTimeStep):
 
         # land cover parameters on the first day of the year or of the simulation
@@ -1030,6 +1048,7 @@ class LandCover(object):
         groundwater,
         satisfied_irrigation_water_height=0.0,
         reducedCapRise=0.0,
+        meteo=None,
     ):
 
         # reduced capillary rise (e.g. due to non-fossil groundwater abstraction)
@@ -1037,7 +1056,7 @@ class LandCover(object):
 
         # qDR, qSF and q23 (and update the storages)
         self.upperSoilUpdate(
-            capRiseFrac, currTimeStep, satisfied_irrigation_water_height, groundwater
+            capRiseFrac, currTimeStep, satisfied_irrigation_water_height, groundwater, meteo=meteo
         )
 
         # degrees of saturation (only needed for reporting)
@@ -2432,63 +2451,66 @@ class LandCover(object):
         # scale all fluxes based on the available water (alternative 1)
         self.scaleAllFluxes(groundwater)
 
-    def updateSoilStates(self):
+    def updateSoilStates(self, meteo=None, groundwater=None, currTimeStep=None):
 
         # update the states, making sure no storage capacity is exceeded
 
         if self.numberOfLayers == 2:
 
-            # update storLow: + percUpp + capRiseLow - percLow - interflow - actTranspiLow - capRiseUpp;
-            # Rens: S2_L[TYPE]= max(0,S2_L[TYPE]+P1_L[TYPE]+CR2_L[TYPE]-(P2_L[TYPE]+Q2_L[TYPE]+CR1_L[TYPE]+T_a2[TYPE]))
-            self.storLow = pcr.max(
-                0.0,
-                self.storLow
-                + self.percUpp
-                + self.capRiseLow
-                - (
-                    self.percLow + self.interflow + self.actTranspiLow + self.capRiseUpp
-                ),
-            )
-            # if necessary, reduce the percolation input
-            percUpp = self.percUpp
-
-            if self.allowNegativePercolation:
-                # as in Rens's oldcalc script, where P1 can be negative: P1_L[TYPE] = P1_L[TYPE]-max(0,S2_L[TYPE]-SC2[TYPE])
-                self.percUpp = percUpp - pcr.max(
-                    0.0, self.storLow - self.parameters.storCapLow
-                )
+            if self.includeRichards:
+                ri.runRichards(self, meteo, groundwater, currTimeStep)
             else:
-                # alternative proposed by Edwin: avoid negative percolation
-                self.percUpp = pcr.max(
+                # update storLow: + percUpp + capRiseLow - percLow - interflow - actTranspiLow - capRiseUpp;
+                # Rens: S2_L[TYPE]= max(0,S2_L[TYPE]+P1_L[TYPE]+CR2_L[TYPE]-(P2_L[TYPE]+Q2_L[TYPE]+CR1_L[TYPE]+T_a2[TYPE]))
+                self.storLow = pcr.max(
                     0.0,
-                    percUpp - pcr.max(0.0, self.storLow - self.parameters.storCapLow),
+                    self.storLow
+                    + self.percUpp
+                    + self.capRiseLow
+                    - (
+                        self.percLow + self.interflow + self.actTranspiLow + self.capRiseUpp
+                    ),
                 )
-                self.storLow = self.storLow - percUpp + self.percUpp
-                # if necessary, reduce the capillary rise input
-                capRiseLow = self.capRiseLow
-                self.capRiseLow = pcr.max(
-                    0.0,
-                    capRiseLow
-                    - pcr.max(0.0, self.storLow - self.parameters.storCapLow),
-                )
-                self.storLow = self.storLow - capRiseLow + self.capRiseLow
-                # if necessary, increase the interflow outflow
-                addInterflow = pcr.max(0.0, self.storLow - self.parameters.storCapLow)
-                self.interflow += addInterflow
-                self.storLow -= addInterflow
-                self.storLow = pcr.min(self.storLow, self.parameters.storCapLow)
+                # if necessary, reduce the percolation input
+                percUpp = self.percUpp
 
-            # update storUpp: + infiltration + capRiseUpp - percUpp - actTranspiUpp - actBareSoilEvap;
-            # Rens: S1_L[TYPE]= max(0,S1_L[TYPE]+P0_L[TYPE]+CR1_L[TYPE]-(P1_L[TYPE]+T_a1[TYPE]+ES_a[TYPE]))
-            self.storUpp = pcr.max(
-                0.0,
-                self.storUpp
-                + self.infiltration
-                + self.capRiseUpp
-                - (self.percUpp + self.actTranspiUpp + self.actBareSoilEvap),
-            )
-            # any excess above storCapUpp goes to topWaterLayer
-            self.satExcess = pcr.max(0.0, self.storUpp - self.parameters.storCapUpp)
+                if self.allowNegativePercolation:
+                    # as in Rens's oldcalc script, where P1 can be negative: P1_L[TYPE] = P1_L[TYPE]-max(0,S2_L[TYPE]-SC2[TYPE])
+                    self.percUpp = percUpp - pcr.max(
+                        0.0, self.storLow - self.parameters.storCapLow
+                    )
+                else:
+                    # alternative proposed by Edwin: avoid negative percolation
+                    self.percUpp = pcr.max(
+                        0.0,
+                        percUpp - pcr.max(0.0, self.storLow - self.parameters.storCapLow),
+                    )
+                    self.storLow = self.storLow - percUpp + self.percUpp
+                    # if necessary, reduce the capillary rise input
+                    capRiseLow = self.capRiseLow
+                    self.capRiseLow = pcr.max(
+                        0.0,
+                        capRiseLow
+                        - pcr.max(0.0, self.storLow - self.parameters.storCapLow),
+                    )
+                    self.storLow = self.storLow - capRiseLow + self.capRiseLow
+                    # if necessary, increase the interflow outflow
+                    addInterflow = pcr.max(0.0, self.storLow - self.parameters.storCapLow)
+                    self.interflow += addInterflow
+                    self.storLow -= addInterflow
+                    self.storLow = pcr.min(self.storLow, self.parameters.storCapLow)
+
+                # update storUpp: + infiltration + capRiseUpp - percUpp - actTranspiUpp - actBareSoilEvap;
+                # Rens: S1_L[TYPE]= max(0,S1_L[TYPE]+P0_L[TYPE]+CR1_L[TYPE]-(P1_L[TYPE]+T_a1[TYPE]+ES_a[TYPE]))
+                self.storUpp = pcr.max(
+                    0.0,
+                    self.storUpp
+                    + self.infiltration
+                    + self.capRiseUpp
+                    - (self.percUpp + self.actTranspiUpp + self.actBareSoilEvap),
+                )
+                # any excess above storCapUpp goes to topWaterLayer
+                self.satExcess = pcr.max(0.0, self.storUpp - self.parameters.storCapUpp)
             self.topWaterLayer = self.topWaterLayer + self.satExcess
 
             # any excess above minTopWaterLayer is released as directRunoff
@@ -2677,7 +2699,7 @@ class LandCover(object):
         self.landSurfaceRunoff = self.directRunoff + self.interflowTotal
 
     def upperSoilUpdate(
-        self, capRiseFrac, currTimeStep, satisfied_irrigation_water_height, groundwater
+        self, capRiseFrac, currTimeStep, satisfied_irrigation_water_height, groundwater, meteo=None
     ):
 
         if self.debugWaterBalance:
@@ -2725,7 +2747,7 @@ class LandCover(object):
             self.scaleAllFluxes(groundwater)
 
         # update all soil states (including the final/corrected fluxes)
-        self.updateSoilStates()
+        self.updateSoilStates(meteo, groundwater, currTimeStep)
 
         # irrigation transpiration deficit for reporting
         self.irrigationTranspirationDeficit = 0.0
